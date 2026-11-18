@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="it" data-t="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Albero genealogico</title>
+<style>
+:root{--bg:#f2f4f3;--fg:#14201c;--mut:#6b7873;--card:#fff;--ln:#b9c4bf;--acc:#1f5f5b;--m:#e6eef2;--f:#f3e8ee}
+:root[data-t=dark]{--bg:#0f1514;--fg:#e4ebe8;--mut:#8a9993;--card:#18211f;--ln:#3b4945;--acc:#6fc2b8;--m:#17262e;--f:#2a1d27}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.4 system-ui,sans-serif}
+button,select,input,textarea{font:inherit;color:var(--fg);background:var(--card);border:1px solid var(--ln);border-radius:6px;padding:6px 9px}
+button{cursor:pointer}button:hover{border-color:var(--acc)}
+:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
+[hidden]{display:none!important}
+#lg{display:grid;place-items:center;min-height:100vh}
+#lg form{display:grid;gap:12px;width:min(320px,88vw)}
+h1,h2{font-family:"Iowan Old Style",Palatino,Georgia,serif;font-weight:500;margin:0}
+h1{font-size:30px}
+#er{color:#b3402f;min-height:1.2em;margin:0}
+header{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:8px 12px;border-bottom:1px solid var(--ln)}
+header h1{font-size:20px;margin-right:auto}
+#v{position:fixed;inset:var(--hh,52px) 0 0 0;touch-action:none;cursor:grab}
+#s{width:100%;height:100%;display:block}
+#p{position:fixed;right:0;top:0;bottom:0;width:min(390px,100%);overflow:auto;background:var(--card);border-left:1px solid var(--ln);padding:16px;z-index:5}
+#p label{display:block;margin:8px 0;color:var(--mut);font-size:13px}
+#p label input:not([type=checkbox]),#p label select,#p label textarea{display:block;width:100%;margin-top:2px;color:var(--fg);font-size:15px}
+#p img{width:96px;height:96px;object-fit:cover;border-radius:50%;display:block;margin-top:8px}
+.u{border:1px solid var(--ln);border-radius:8px;padding:10px;margin:8px 0;display:grid;gap:6px}
+.u a{cursor:pointer;color:var(--acc);text-decoration:underline;margin-right:8px}
+@media(max-width:700px){#p{top:auto;height:72vh;border-left:0;border-top:1px solid var(--ln)}}
+@media print{header,#p{display:none!important}:root,:root[data-t]{--bg:#fff;--fg:#000;--card:#fff;--ln:#999;--mut:#555;--m:#e6eef2;--f:#f3e8ee}#v{inset:0}}
+</style>
+</head>
+<body>
+<div id="lg">
+ <form id="lf">
+  <h1>Albero genealogico</h1>
+  <input id="pw" type="password" placeholder="Password" autocomplete="current-password" autofocus>
+  <button>Entra</button>
+  <p id="er"></p>
+ </form>
+</div>
+<div id="app" hidden>
+ <header>
+  <h1>Albero genealogico</h1>
+  <select id="rt" title="Mostra i discendenti di"></select>
+  <input id="q" list="dl" placeholder="Cerca persona" size="14"><datalist id="dl"></datalist>
+  <button id="zo" title="Riduci">−</button><button id="zi" title="Ingrandisci">+</button><button id="ft">Adatta</button>
+  <button id="th">Tema</button><button id="gp">PNG</button><button id="gf">PDF</button>
+  <button id="ex">Esporta dati</button><button id="im">Importa dati</button><input id="imf" type="file" hidden>
+  <button id="ou">Esci</button>
+ </header>
+ <div id="v"></div>
+ <aside id="p" hidden></aside>
+</div>
+<script src="data.enc.js"></script>
+<script>
+// ---------- Utilità ----------
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const B=u=>{let s='';const a=new Uint8Array(u);for(let i=0;i<a.length;i+=8192)s+=String.fromCharCode.apply(null,a.subarray(i,i+8192));return btoa(s)};
+const U8=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
+const mem={};
+const st=(w,k,v)=>{try{const o=window[w];if(v===undefined)return o[k];o[k]=v}catch(e){if(v===undefined)return mem[w+k];mem[w+k]=v}};
+const lg=k=>st('localStorage',k),ls=(k,v)=>st('localStorage',k,v),sg=k=>st('sessionStorage',k),ss=(k,v)=>st('sessionStorage',k,v);
+const dl=(n,b)=>{const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=n;a.click()};
+
+// ---------- Cifratura: PBKDF2 + AES-GCM ----------
+let DB,key,sl,root='p01',vb,fb,sel,cnt=0;
+const dk=async(pw,salt)=>crypto.subtle.deriveKey({name:'PBKDF2',salt,iterations:250000,hash:'SHA-256'},
+ await crypto.subtle.importKey('raw',new TextEncoder().encode(pw),'PBKDF2',false,['deriveKey']),
+ {name:'AES-GCM',length:256},true,['encrypt','decrypt']);
+const dec=async(b,k)=>JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({name:'AES-GCM',iv:U8(b.iv)},k,U8(b.data))));
+const enc=async o=>{const iv=crypto.getRandomValues(new Uint8Array(12));
+ const ct=await crypto.subtle.encrypt({name:'AES-GCM',iv},key,new TextEncoder().encode(JSON.stringify(o)));
+ return{salt:sl,iv:B(iv),data:B(ct)}};
+let tm;const save=()=>{clearTimeout(tm);tm=setTimeout(async()=>{ls('giu',JSON.stringify({...await enc(DB),base:ENC.iv}))},400)};
+
+// Sblocca: prima i dati locali (modifiche salvate nel browser), poi il file del sito
+async function unlock(pw){
+ const L=lg('giu')?JSON.parse(lg('giu')):null;
+ for(const b of L?[L,ENC]:[ENC]){
+  try{
+   const k=pw?await dk(pw,U8(b.salt)):await crypto.subtle.importKey('jwk',JSON.parse(sg('k')),'AES-GCM',true,['encrypt','decrypt']);
+   DB=await dec(b,k);key=k;sl=b.salt;
+   if(b===L&&L.base!=ENC.iv&&confirm('Esiste una versione più recente del file dati. Usarla? (le modifiche non esportate andranno perse)')){try{DB=await dec(ENC,k)}catch(e){}}
+   ss('k',JSON.stringify(await crypto.subtle.exportKey('jwk',k)));return true;
+  }catch(e){}
+ }
+ return false;
+}
+
+// ---------- Modello ----------
+const P=id=>DB.persone.find(p=>p.id==id);
+const nm=p=>p?((p.nome||'?')+' '+(p.cognome||'')).trim():'?';
+const yr=p=>p.deceduto?`${p.nascita||'?'} – ${p.morte||'†'}`:(p.nascita||'');
+const U=id=>DB.unioni.filter(u=>u.partner1==id||u.partner2==id);
+const PU=id=>DB.unioni.find(u=>u.figli.includes(id));
+const all=()=>[...DB.persone].sort((a,b)=>nm(a).localeCompare(nm(b)));
+const np=o=>{const p={id:'n'+(++cnt)+Date.now().toString(36),nome:'',cognome:'',cognome_nubile:null,sesso:'',nascita:'',morte:'',deceduto:false,luogo_nascita:null,luogo_morte:null,professione:null,contatti:null,note:null,fonti:[],...o};DB.persone.push(p);return p};
+
+// ---------- Layout albero (discendenti dall'alto verso il basso) ----------
+const W=128,H=56,G=14,V=76;
+function node(id,seen){
+ seen.add(id);const sp=[];let kids=[];
+ U(id).forEach(u=>{const o=u.partner1==id?u.partner2:u.partner1;
+  if(o&&!seen.has(o)){seen.add(o);sp.push({id:o,u})}
+  u.figli.forEach(c=>{if(!seen.has(c))kids.push(c)})});
+ kids=[...new Set(kids)];
+ return{ppl:[{id},...sp],ch:kids.map(c=>node(c,seen))};
+}
+const nw=n=>n.ppl.length*(W+G)-G;
+const meas=n=>(n.sw=Math.max(nw(n),n.ch.reduce((a,c)=>a+meas(c)+G,-G)));
+const place=(n,x,y)=>{n.y=y;n.x=x+(n.sw-nw(n))/2;let cx=x;n.ch.forEach(c=>{place(c,cx,y+H+V);cx+=c.sw+G})};
+const cut=s=>s.length>19?s.slice(0,18)+'…':s;
+const card=(id,x,y)=>{const p=P(id);return`<g data-id="${id}" transform="translate(${x},${y})" style="cursor:pointer"><rect width="${W}" height="${H}" rx="6" style="fill:var(--${p.sesso=='F'?'f':'m'});stroke:var(--ln);opacity:${p.deceduto?.8:1}"/><text x="${W/2}" y="19" text-anchor="middle" font-size="12.5" style="fill:var(--fg)">${esc(cut(p.nome||'?'))}</text><text x="${W/2}" y="34" text-anchor="middle" font-size="12.5" font-weight="600" style="fill:var(--fg)">${esc(cut(p.cognome||''))}</text><text x="${W/2}" y="49" text-anchor="middle" font-size="10.5" style="fill:var(--mut)">${esc(yr(p))}</text></g>`};
+const ln=(a,b,c,d,dash)=>`<line x1="${a}" y1="${b}" x2="${c}" y2="${d}" style="stroke:var(--ln)" stroke-width="1.5"${dash?' stroke-dasharray="4 3"':''}/>`;
+function draw(n,o,m){
+ m.h=Math.max(m.h,n.y+H);
+ n.ppl.forEach((p,i)=>{const x=n.x+i*(W+G);o.push(card(p.id,x,n.y));
+  if(i)o.push(ln(x-G,n.y+H/2,x,n.y+H/2,p.u.tipo!='coniugi'))});
+ if(!n.ch.length)return;
+ const gx=n.x+nw(n)/2,ym=n.y+H+V/2;
+ o.push(ln(gx,n.y+H,gx,ym));
+ n.ch.forEach(c=>{const cx=c.x+nw(c)/2;o.push(ln(gx,ym,cx,ym),ln(cx,ym,cx,c.y));draw(c,o,m)});
+}
+const setvb=()=>$('#s').setAttribute('viewBox',`${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
+function render(fit){
+ $('#rt').innerHTML=all().map(p=>`<option value="${p.id}" ${p.id==root?'selected':''}>${esc(nm(p))} ${esc(p.nascita||'')}</option>`).join('');
+ $('#dl').innerHTML=all().map(p=>`<option value="${esc(nm(p)+' '+(p.nascita||''))}">`).join('');
+ const n=node(root,new Set());meas(n);place(n,0,0);const o=[],m={h:0};draw(n,o,m);
+ fb={x:-20,y:-20,w:n.sw+40,h:m.h+40};
+ $('#v').innerHTML=`<svg id="s" xmlns="http://www.w3.org/2000/svg" font-family="Iowan Old Style,Palatino,Georgia,serif">${o.join('')}</svg>`;
+ if(fit||!vb)vb={...fb};setvb();
+}
+const zoom=f=>{vb.x+=vb.w*(1-f)/2;vb.y+=vb.h*(1-f)/2;vb.w*=f;vb.h*=f;setvb()};
+
+// Pan con trascinamento, zoom con rotella, click su una carta per aprire la scheda
+let pd=null,mv=0;const v=$('#v');
+v.onpointerdown=e=>{pd={x:e.clientX,y:e.clientY};mv=0};
+window.onpointermove=e=>{if(!pd)return;const s=$('#s'),k=Math.max(vb.w/s.clientWidth,vb.h/s.clientHeight),dx=e.clientX-pd.x,dy=e.clientY-pd.y;
+ mv+=Math.abs(dx)+Math.abs(dy);vb.x-=dx*k;vb.y-=dy*k;pd={x:e.clientX,y:e.clientY};setvb()};
+window.onpointerup=()=>pd=null;
+v.onwheel=e=>{e.preventDefault();zoom(e.deltaY<0?.85:1.18)};
+v.onclick=e=>{if(mv>5)return;const g=e.target.closest('[data-id]');if(g)open(g.dataset.id)};
+
+// ---------- Scheda persona (tutto modificabile) ----------
+const F=[['nome','Nome'],['cognome','Cognome'],['cognome_nubile','Cognome da nubile'],['nascita','Nascita (gg/mm/aaaa)'],['luogo_nascita','Luogo di nascita'],['morte','Morte (gg/mm/aaaa)'],['luogo_morte','Luogo di morte'],['professione','Professione'],['contatti','Contatti'],['fonti','Fonti / documenti']];
+const ops=(cur,none)=>`<option value="">${none}</option>`+all().map(q=>`<option value="${q.id}" ${q.id==cur?'selected':''}>${esc(nm(q))} ${esc(q.nascita||'')}</option>`).join('');
+function open(id){
+ sel=id;const p=P(id),pu=PU(id);
+ $('#p').innerHTML=`<button data-a="x" style="float:right">✕</button><h2>${esc(nm(p))}</h2>
+ ${p.foto?`<img src="${p.foto}" alt="">`:''}<label>Foto<input id="ph" type="file" accept="image/*"></label>
+ ${F.map(([k,l])=>`<label>${l}<input data-k="${k}" value="${esc(Array.isArray(p[k])?p[k].join('; '):p[k])}"></label>`).join('')}
+ <label>Sesso<select data-k="sesso">${[['','—'],['M','Maschio'],['F','Femmina']].map(([a,b])=>`<option value="${a}" ${p.sesso==a?'selected':''}>${b}</option>`).join('')}</select></label>
+ <label><input type="checkbox" data-k="deceduto" ${p.deceduto?'checked':''}> Deceduto/a</label>
+ <label>Note<textarea data-k="note" rows="3">${esc(p.note)}</textarea></label>
+ <label>Figlio/a di<select data-a="par"><option value="">—</option>${DB.unioni.map(u=>`<option value="${u.id}" ${pu&&pu.id==u.id?'selected':''}>${esc(nm(P(u.partner1))+' + '+nm(P(u.partner2)))}</option>`).join('')}</select></label>
+ <h2 style="margin-top:14px;font-size:18px">Unioni</h2>
+ ${U(id).map(u=>`<div class="u"><select data-a="tipo" data-u="${u.id}">${['coniugi','divorziati','conviventi'].map(t=>`<option ${u.tipo==t?'selected':''}>${t}</option>`).join('')}</select>
+  <select data-a="prt" data-u="${u.id}">${ops(u.partner1==id?u.partner2:u.partner1,'— partner —')}</select>
+  <div>${u.figli.map(c=>`<a data-o="${c}">${esc(nm(P(c)))}</a>`).join('')||'<span style="color:var(--mut)">Nessun figlio</span>'}</div>
+  <button data-a="fig" data-u="${u.id}">+ Figlio/a</button></div>`).join('')}
+ <p><button data-a="uni">+ Unione</button> <button data-a="root">Mostra i suoi discendenti</button> <button data-a="del">Elimina persona</button></p>`;
+ $('#p').hidden=false;
+}
+const done=()=>{save();render(false);open(sel)};
+$('#p').onchange=e=>{
+ const t=e.target,d=t.dataset,p=P(sel);
+ if(d.k){p[d.k]=t.type=='checkbox'?t.checked:t.value;save();render(false);return}
+ if(t.id=='ph'){const f=t.files[0];if(!f)return;const r=new FileReader();
+  r.onload=()=>{const im=new Image();im.onload=()=>{const c=document.createElement('canvas'),s=Math.min(1,240/Math.max(im.width,im.height));
+   c.width=im.width*s;c.height=im.height*s;c.getContext('2d').drawImage(im,0,0,c.width,c.height);p.foto=c.toDataURL('image/jpeg',.75);done()};im.src=r.result};
+  r.readAsDataURL(f);return}
+ if(d.a=='par'){DB.unioni.forEach(u=>u.figli=u.figli.filter(c=>c!=sel));if(t.value)DB.unioni.find(u=>u.id==t.value).figli.push(sel)}
+ if(d.a=='tipo')DB.unioni.find(u=>u.id==d.u).tipo=t.value;
+ if(d.a=='prt'){const u=DB.unioni.find(x=>x.id==d.u);u[u.partner1==sel?'partner2':'partner1']=t.value||null}
+ done();
+};
+$('#p').onclick=e=>{
+ const d=e.target.dataset,p=P(sel);
+ if(d.o)return open(d.o);
+ if(d.a=='x')$('#p').hidden=true;
+ if(d.a=='fig'){const c=np({cognome:p.cognome});DB.unioni.find(u=>u.id==d.u).figli.push(c.id);sel=c.id;done()}
+ if(d.a=='uni'){const c=np();DB.unioni.push({id:'u'+Date.now().toString(36),partner1:sel,partner2:c.id,tipo:'coniugi',figli:[]});done()}
+ if(d.a=='root'){root=sel;render(true)}
+ if(d.a=='del'&&confirm('Eliminare '+nm(p)+'?')){
+  DB.persone=DB.persone.filter(x=>x.id!=sel);
+  DB.unioni.forEach(u=>{u.figli=u.figli.filter(c=>c!=sel);['partner1','partner2'].forEach(k=>{if(u[k]==sel)u[k]=null})});
+  DB.unioni=DB.unioni.filter(u=>u.partner1||u.partner2||u.figli.length);
+  if(root==sel)root=DB.persone[0].id;$('#p').hidden=true;save();render(true)}
+};
+
+// ---------- Barra superiore ----------
+$('#rt').onchange=e=>{root=e.target.value;render(true)};
+$('#q').onchange=e=>{const p=DB.persone.find(x=>nm(x)+' '+(x.nascita||'')==e.target.value);if(p){open(p.id);e.target.value=''}};
+$('#zi').onclick=()=>zoom(.8);$('#zo').onclick=()=>zoom(1.25);$('#ft').onclick=()=>{vb={...fb};setvb()};
+const theme=t=>{document.documentElement.dataset.t=t;ls('tema',t)};
+$('#th').onclick=()=>theme(document.documentElement.dataset.t=='dark'?'light':'dark');
+$('#ou').onclick=()=>{ss('k','');location.reload()};
+$('#gf').onclick=()=>{vb={...fb};setvb();window.print()};
+$('#gp').onclick=()=>{
+ const cs=getComputedStyle(document.documentElement),s=$('#s').cloneNode(true);
+ s.setAttribute('viewBox',`${fb.x} ${fb.y} ${fb.w} ${fb.h}`);s.setAttribute('width',fb.w*2);s.setAttribute('height',fb.h*2);
+ const str=new XMLSerializer().serializeToString(s).replace(/var\(--(\w+)\)/g,(_,k)=>cs.getPropertyValue('--'+k).trim());
+ const im=new Image();im.onload=()=>{const c=document.createElement('canvas');c.width=fb.w*2;c.height=fb.h*2;const x=c.getContext('2d');
+  x.fillStyle=cs.getPropertyValue('--bg');x.fillRect(0,0,c.width,c.height);x.drawImage(im,0,0);c.toBlob(b=>dl('albero.png',b))};
+ im.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(str);
+};
+// Esporta il file cifrato da sostituire nel repository (data.enc.js); importa un file esportato in precedenza
+$('#ex').onclick=async()=>dl('data.enc.js',new Blob(['window.ENC='+JSON.stringify(await enc(DB))+';']));
+$('#im').onclick=()=>$('#imf').click();
+$('#imf').onchange=async e=>{try{const t=await e.target.files[0].text();DB=await dec(JSON.parse(t.slice(t.indexOf('{'),t.lastIndexOf('}')+1)),key);save();render(true)}catch(x){alert('File non valido o cifrato con un\'altra password')}};
+
+// ---------- Avvio ----------
+const start=()=>{$('#lg').hidden=true;$('#app').hidden=false;$('#v').style.top=document.querySelector('header').offsetHeight+'px';render(true)};
+theme(lg('tema')||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'));
+$('#lf').onsubmit=async e=>{e.preventDefault();$('#er').textContent='';
+ if(typeof ENC=='undefined')return $('#er').textContent='File data.enc.js non trovato';
+ if(!crypto.subtle)return $('#er').textContent='Cifratura non disponibile: usa https o apri il file dal computer';
+ if(await unlock($('#pw').value))start();else $('#er').textContent='Password errata'};
+if(sg('k'))unlock(null).then(ok=>ok&&start());
+</script>
+</body>
+</html>
