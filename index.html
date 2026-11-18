@@ -48,7 +48,7 @@ header h1{font-size:20px;margin-right:auto}
   <input id="q" list="dl" placeholder="Cerca persona" size="14"><datalist id="dl"></datalist>
   <button id="zo" title="Riduci">−</button><button id="zi" title="Ingrandisci">+</button><button id="ft">Adatta</button>
   <button id="th">Tema</button><button id="gp">PNG</button><button id="gf">PDF</button>
-  <button id="ex">Esporta dati</button><button id="im">Importa dati</button><input id="imf" type="file" hidden>
+  <button id="pn">+ Persona</button><button id="ex">Esporta dati</button><button id="im">Importa dati</button><input id="imf" type="file" hidden>
   <button id="ou">Esci</button>
  </header>
  <div id="v"></div>
@@ -156,13 +156,13 @@ function open(id){
  <label>Sesso<select data-k="sesso">${[['','—'],['M','Maschio'],['F','Femmina']].map(([a,b])=>`<option value="${a}" ${p.sesso==a?'selected':''}>${b}</option>`).join('')}</select></label>
  <label><input type="checkbox" data-k="deceduto" ${p.deceduto?'checked':''}> Deceduto/a</label>
  <label>Note<textarea data-k="note" rows="3">${esc(p.note)}</textarea></label>
- <label>Figlio/a di<select data-a="par"><option value="">—</option>${DB.unioni.map(u=>`<option value="${u.id}" ${pu&&pu.id==u.id?'selected':''}>${esc(nm(P(u.partner1))+' + '+nm(P(u.partner2)))}</option>`).join('')}</select></label>
+ <label>Figlio/a di<select data-a="par"><option value="">—</option>${DB.unioni.map(u=>`<option value="${u.id}" ${pu&&pu.id==u.id?'selected':''}>${esc(nm(P(u.partner1))+' + '+nm(P(u.partner2)))}</option>`).join('')}<optgroup label="Solo un genitore">${all().filter(q=>q.id!=id&&!U(q.id).length).map(q=>`<option value="p:${q.id}">${esc(nm(q))} ${esc(q.nascita||'')}</option>`).join('')}</optgroup></select></label>
  <h2 style="margin-top:14px;font-size:18px">Unioni</h2>
  ${U(id).map(u=>`<div class="u"><select data-a="tipo" data-u="${u.id}">${['coniugi','divorziati','conviventi'].map(t=>`<option ${u.tipo==t?'selected':''}>${t}</option>`).join('')}</select>
-  <select data-a="prt" data-u="${u.id}">${ops(u.partner1==id?u.partner2:u.partner1,'— partner —')}</select>
+  <select data-a="prt" data-u="${u.id}">${ops(u.partner1==id?u.partner2:u.partner1,'— partner —')}<option value="__new">➕ Nuova persona</option></select>
   <div>${u.figli.map(c=>`<a data-o="${c}">${esc(nm(P(c)))}</a>`).join('')||'<span style="color:var(--mut)">Nessun figlio</span>'}</div>
   <button data-a="fig" data-u="${u.id}">+ Figlio/a</button></div>`).join('')}
- <p><button data-a="uni">+ Unione</button> <button data-a="root">Mostra i suoi discendenti</button> <button data-a="del">Elimina persona</button></p>`;
+ <p>${U(id).length?'':'<button data-a="figs">+ Figlio/a</button> '}<button data-a="uni">+ Unione</button> <button data-a="root">Mostra i suoi discendenti</button> <button data-a="del">Elimina persona</button></p>`;
  $('#p').hidden=false;
 }
 const done=()=>{save();render(false);open(sel)};
@@ -173,9 +173,9 @@ $('#p').onchange=e=>{
   r.onload=()=>{const im=new Image();im.onload=()=>{const c=document.createElement('canvas'),s=Math.min(1,240/Math.max(im.width,im.height));
    c.width=im.width*s;c.height=im.height*s;c.getContext('2d').drawImage(im,0,0,c.width,c.height);p.foto=c.toDataURL('image/jpeg',.75);done()};im.src=r.result};
   r.readAsDataURL(f);return}
- if(d.a=='par'){DB.unioni.forEach(u=>u.figli=u.figli.filter(c=>c!=sel));if(t.value)DB.unioni.find(u=>u.id==t.value).figli.push(sel)}
+ if(d.a=='par'){DB.unioni.forEach(u=>u.figli=u.figli.filter(c=>c!=sel));if(t.value.startsWith('p:'))DB.unioni.push({id:'u'+Date.now().toString(36),partner1:t.value.slice(2),partner2:null,tipo:'coniugi',figli:[sel]});else if(t.value)DB.unioni.find(u=>u.id==t.value).figli.push(sel)}
  if(d.a=='tipo')DB.unioni.find(u=>u.id==d.u).tipo=t.value;
- if(d.a=='prt'){const u=DB.unioni.find(x=>x.id==d.u);u[u.partner1==sel?'partner2':'partner1']=t.value||null}
+ if(d.a=='prt'){const u=DB.unioni.find(x=>x.id==d.u),val=t.value=='__new'?np().id:t.value;u[u.partner1==sel?'partner2':'partner1']=val||null}
  done();
 };
 $('#p').onclick=e=>{
@@ -183,7 +183,8 @@ $('#p').onclick=e=>{
  if(d.o)return open(d.o);
  if(d.a=='x')$('#p').hidden=true;
  if(d.a=='fig'){const c=np({cognome:p.cognome});DB.unioni.find(u=>u.id==d.u).figli.push(c.id);sel=c.id;done()}
- if(d.a=='uni'){const c=np();DB.unioni.push({id:'u'+Date.now().toString(36),partner1:sel,partner2:c.id,tipo:'coniugi',figli:[]});done()}
+ if(d.a=='figs'){const c=np({cognome:p.cognome});DB.unioni.push({id:'u'+Date.now().toString(36),partner1:sel,partner2:null,tipo:'coniugi',figli:[c.id]});sel=c.id;done()}
+ if(d.a=='uni'){DB.unioni.push({id:'u'+Date.now().toString(36),partner1:sel,partner2:null,tipo:'coniugi',figli:[]});done()}
  if(d.a=='root'){root=sel;render(true)}
  if(d.a=='del'&&confirm('Eliminare '+nm(p)+'?')){
   DB.persone=DB.persone.filter(x=>x.id!=sel);
@@ -194,6 +195,7 @@ $('#p').onclick=e=>{
 
 // ---------- Barra superiore ----------
 $('#rt').onchange=e=>{root=e.target.value;render(true)};
+$('#pn').onclick=()=>{const c=np();save();render(false);open(c.id)};
 $('#q').onchange=e=>{const p=DB.persone.find(x=>nm(x)+' '+(x.nascita||'')==e.target.value);if(p){open(p.id);e.target.value=''}};
 $('#zi').onclick=()=>zoom(.8);$('#zo').onclick=()=>zoom(1.25);$('#ft').onclick=()=>{vb={...fb};setvb()};
 const theme=t=>{document.documentElement.dataset.t=t;ls('tema',t)};
